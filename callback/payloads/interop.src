@@ -1,0 +1,13 @@
+interop_map = get_custom_object()
+id = params[0]
+
+interop_map[id] = {}
+interop = interop_map[id]
+interop.active_user = @active_user
+interop.current_path = @current_path
+interop.get_router = @get_router
+interop.get_switch = @get_switch
+interop.home_dir = @home_dir
+interop.program_path = @program_path
+interop.user_bank_number = @user_bank_number
+interop.user_mail_address = @user_mail_address

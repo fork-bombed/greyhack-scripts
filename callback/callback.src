@@ -1,0 +1,638 @@
+import_code("/home/murphy/callback/libs/graphics")
+
+Callback = {}
+Callback.constants = {}
+Callback.constants.CLI_NAME = "callback"
+Callback.constants.VERSION = "1.0.0"
+
+
+CLI = {}
+CLI.environment = {}
+CLI.environment.index = {}
+CLI.current_env = "index"
+CLI.global_commands = {}
+CLI.get_env = function()
+    return CLI.current_env
+end function
+CLI.set_env = function(env)
+    if CLI.environment.hasIndex(env) then
+        CLI.current_env = env
+    else
+        Logger.error("Environment " + env.bold() + " does not exist.")
+    end if
+end function
+CLI.get_env_text = function()
+    callback_txt = Callback.constants.CLI_NAME.color(Color.RED).underline()
+    env_txt = "[] > "
+    if CLI.current_env != null then
+        env_txt = "[" + CLI.current_env.bold() + "]" + " > "
+    end if
+    return callback_txt + env_txt
+end function
+CLI.add_global_command = function(name, desc, fun)
+    command = new Command
+    command.create(name, desc, @fun)
+    CLI.global_commands[name] = command
+end function
+CLI.add_command = function(env, name, desc, fun, usage=null)
+    if not CLI.environment.hasIndex(env) then
+        CLI.environment[env] = {}
+    end if
+    command = new Command
+    command.create(name, desc, @fun, usage)
+    CLI.environment[env][name] = command
+end function
+CLI.get_command = function(env, name)
+    if CLI.environment.hasIndex(env) then
+        if CLI.environment[env].hasIndex(name) then
+            return CLI.environment[env][name]
+        else if CLI.global_commands.hasIndex(name) then
+            return CLI.global_commands[name]
+        else if CLI.is_help_command(name) then
+            CLI.print_help()
+        else
+            Logger.error("Command " + name.bold() + " does not exist in environment " + env.bold() + ".")
+        end if
+    else
+        Logger.error("Environment " + env.bold() + " does not exist.")
+    end if
+end function
+CLI.is_help_command = function(input)
+    if input == "?" or input == "help" or input == "h" then
+        return true
+    end if
+end function
+CLI.get_input = function()
+    input = user_input(CLI.get_env_text())
+    arguments = input.split(" ")
+    command_name = arguments[0].trim().lower()
+    params = null
+    if arguments.len() > 1 then
+        params = arguments[1:]
+    end if
+    command = CLI.get_command(CLI.current_env, command_name)
+    if command then
+        if params then
+            command.fun(params)
+        else
+            command.fun()
+        end if
+    end if
+end function
+CLI.print_help = function(params=null)
+    help_table = new Table
+    help_table.clear()
+    help_table.HORIZONTAL_CHAR = " "
+    help_table.VERTICAL_CHAR = " "
+    help_table.CORNER_CHAR = " "
+    help_table.set_headings(["command","description"])
+    rows = []
+    commands = CLI.environment[CLI.current_env]
+    for command_name in commands.indexes
+        command = commands[command_name]
+        command_name = command.name
+        if command.usage != null then command_name = command.usage
+        rows.push([command_name, command.desc])
+    end for
+    help_table.set_rows(rows)
+    table_text = help_table.to_string()
+    print(string.NEWLINE + table_text + string.NEWLINE)
+end function
+CLI.are_you_sure = function(text)
+    resp = user_input("WARNING: ".color(Color.ORANGE) + text + " (y/N): ")
+    if resp.lower() == "y" then
+        return true
+    end if
+    return false
+end function
+
+
+Command = {}
+Command.create = function(name, desc, fun, usage=null)
+    self.name = name
+    self.desc = desc
+    self.fun = @fun
+    self.usage = usage
+end function
+
+
+Machine = {}
+Machine.local = get_shell.host_computer
+Machine.print_machine_info = function()
+    print(string.NEWLINE + "Public IP: " + Machine.local.public_ip)
+    print("Local IP: " + Machine.local.local_ip)
+    print("Gateway: " + Machine.local.network_gateway + string.NEWLINE)
+end function
+
+
+Build = {}
+Build.activate = function()
+    CLI.set_env("build")
+end function
+Build.close = function()
+    CLI.set_env("index")
+end function
+Build.generate_simple = function(params=null)
+    import_code("/home/murphy/callback/templates/simple")
+    ip = Machine.local.public_ip
+    port = 1222
+    proc_name = "ps"
+    if params != null then
+        if params.hasIndex(0) then ip = params[0]
+        if params.hasIndex(1) then port = params[1]
+        if params.hasIndex(2) then proc_name = params[2]
+    end if
+    src = SHELL_TEMPLATE.source.replace("{ip}", ip).replace("{port}", port).replace("{proc_name}", proc_name)
+    Logger.info("Build the following source code on the target machine: " + string.NEWLINE)
+    print(src + string.NEWLINE)
+end function
+
+
+Manage = {}
+Manage.shells = {}
+Manage.active_session = null
+Manage.activate = function()
+    CLI.set_env("manage")
+    Manage.update_shells()
+end function
+Manage.close = function()
+    CLI.set_env("index")
+end function
+Manage.update_shells = function()
+    shells = metaxploit.rshell_server
+    for shell in shells
+        ishell = new IShell
+        ishell.create(shell)
+    end for
+end function
+Manage.list_shells = function()
+    shells = metaxploit.rshell_server
+    shell_table = new Table
+    shell_table.clear()
+    shell_table.HORIZONTAL_CHAR = " "
+    shell_table.VERTICAL_CHAR = " "
+    shell_table.CORNER_CHAR = " "
+    shell_table.set_headings(["session id", "public ip", "local ip", "user"])
+    for shell in shells
+        ishell = new IShell
+        ishell.create(shell)
+        Manage.add_shell(ishell)
+        session = Manage.active_session
+        color = null
+        row = [
+            ishell.get_id(), 
+            ishell.get_public_ip(), 
+            ishell.get_local_ip(), 
+            ishell.get_user(),
+        ]
+        if session then
+            if ishell.get_id() == Manage.active_session.get_id() then
+                color = Color.YELLOW
+            end if
+        end if
+        shell_table.insert_row(row, color)
+    end for
+    shell_table.display()
+end function
+Manage.add_shell = function(ishell)
+    shell_id = ishell.get_id()
+    Manage.shells[shell_id] = ishell
+end function
+Manage.get_session = function(params)
+    if not params.hasIndex(0) then
+        Logger.error("Session ID not provided.")
+        return null
+    end if
+    session = params[0]
+    if not Manage.shells.hasIndex(session) then
+        Logger.error("Session ID does not exist.")
+        return null
+    end if
+    return Manage.shells[session]
+end function
+Manage.use_shell = function(params)
+    session = Manage.get_session(params)
+    Manage.active_session = session
+end function
+Manage.get_active_session = function()
+    if Manage.active_session then
+        return Manage.active_session
+    end if
+    Logger.error("No active session. Run " + "use [session]".bold() + " to use an active session.")
+end function
+Manage.launch_shell = function()
+    session = Manage.get_active_session()
+    if session then
+        session.open_terminal()
+    end if
+end function
+
+
+CustomShell = {}
+CustomShell.commands = {}
+CustomShell.interop = {}
+CustomShell.shell = null
+CustomShell.interface_shell = null
+CustomShell.cur_dir = null
+CustomShell.init = function(ishell)
+    CustomShell.interface_shell = ishell
+    CustomShell.shell = ishell.get_shell
+    CustomShell.interop = CustomShell.init_interop()
+    CustomShell.cur_dir = CustomShell.get_cur_dir()
+end function
+CustomShell.get_cur_dir = function()
+    dir = CustomShell.interop.current_path
+    if dir then
+        return dir
+    else
+        user = CustomShell.interface_shell.get_user()
+        if user == "root" then
+            return "/root"
+        else
+            return "/home/" + user
+        end if
+    end if
+end function
+CustomShell.init_interop = function()
+    shell = CustomShell.get_shell
+    interop_payload_path = current_path + "/payloads/interop.src"
+    interop_payload = Machine.local.File(interop_payload_path)
+    directory = "/home/" + CustomShell.interface_shell.get_user()
+    if CustomShell.interface_shell.get_user() == "root" then
+        directory = "/root"
+    end if
+    if not interop_payload then
+        Logger.error("Interop payload does not exist: " + interop_payload_path)
+        return null
+    end if
+    interop_content = interop_payload.get_content()
+    interop_remote_file = shell.host_computer.touch(directory, "z.src")
+    if not interop_remote_file then
+        Logger.error("Failed to create remote interop payload.")
+        return null
+    end if
+    interop_remote_file_path = directory + "/z.src"
+    interop_remote_file_obj = shell.host_computer.File(interop_remote_file_path)
+    if not interop_remote_file_obj then
+        Logger.error("Failed to locate remote interop payload.")
+        return null
+    end if
+    interop_written = interop_remote_file_obj.set_content(interop_content)
+    if not interop_written then
+        Logger.error("Failed to write remote interop payload.")
+        return null
+    end if
+    shell.build(interop_remote_file_path, directory)
+    interop_binary_file = shell.host_computer.File(directory + "/z")
+    if not interop_binary_file then
+        Logger.error("Failed to locate remote interop payload binary.")
+        return null
+    end if
+    id = CustomShell.interface_shell.get_id()
+    interop_execute = shell.launch(directory + "/z", id)
+    delete_failed = interop_remote_file_obj.delete()
+    if delete_failed then
+        Logger.warn("Failed to delete remote interop payload source code.")
+    end if
+    interop_map = get_custom_object()
+    if interop_map.hasIndex(id) then
+        remote_binary = shell.host_computer.File(interop_map[id].program_path)
+        if remote_binary then
+            delete_failed = remote_binary.delete()
+            if delete_failed then
+                Logger.warn("Failed to delete remote interop payload binary.")
+            end if
+        else
+            Logger.error("Failed to locate remote interop payload binary.")
+        end if
+        return interop_map[id]
+    end if
+    return interop_map
+    Logger.error("Interop session not found. Shell functionality is limited.")
+end function
+CustomShell.add_command = function(name, desc, fun)
+    command = new Command
+    command.create(name, desc, @fun)
+    CustomShell.commands[name] = command
+end function
+CustomShell.get_command = function(name)
+    if CustomShell.commands.hasIndex(name) then
+        return CustomShell.commands[name]
+    else if CLI.is_help_command(name) then
+        CustomShell.print_help()
+    else
+        Logger.error("Command " + name.bold() + " not found.")
+    end if
+end function
+CustomShell.get_preamble = function()
+    shell = CustomShell.get_shell
+    public_ip = shell.host_computer.public_ip.color(Color.BLUE)
+    local_ip = shell.host_computer.local_ip.color(Color.RED)
+    user = CustomShell.interface_shell.get_user()
+    if user == "root" then user = user.color(Color.RED)
+    return "[" + public_ip + "]―[" + user.bold() + "@" + local_ip + "](" + self.cur_dir + ")> "
+end function
+CustomShell.get_shell = function()
+    if not CustomShell.shell then
+        Logger.error("CustomShell not initialized.")
+        exit()
+    end if
+    return CustomShell.shell
+end function
+CustomShell.get_input = function()
+    input = user_input(CustomShell.get_preamble()).trim()
+    arguments = input.split(" ")
+    command_name = arguments[0].trim().lower()
+    params = null
+    if arguments.len() > 1 then
+        params = arguments[1:]
+    end if
+    command = CustomShell.get_command(command_name)
+    if command then
+        if params then
+            command.fun(params)
+        else
+            command.fun()
+        end if
+    end if
+end function
+CustomShell.start_shell = function()
+    CustomShell.active = true
+    while CustomShell.active
+        CustomShell.get_input()
+    end while
+end function
+CustomShell.print_help = function()
+    help_table = new Table
+    help_table.clear()
+    help_table.HORIZONTAL_CHAR = " "
+    help_table.VERTICAL_CHAR = " "
+    help_table.CORNER_CHAR = " "
+    help_table.set_headings(["command","description"])
+    rows = []
+    commands = CustomShell.commands
+    for command_name in commands.indexes
+        command = commands[command_name]
+        command_name = command.name
+        if command.usage != null then command_name = command.usage
+        rows.push([command_name, command.desc])
+    end for
+    help_table.set_rows(rows)
+    table_text = help_table.to_string()
+    print(table_text)
+end function
+CustomShell.get_absolute_dir = function(dir)
+    if dir[0] == "/" then
+        absolute_dir = dir
+    else
+        absolute_dir = CustomShell.cur_dir + "/" + dir
+        if CustomShell.cur_dir == "/" then
+            absolute_dir = CustomShell.cur_dir + dir
+        end if
+    end if
+    return absolute_dir
+end function
+CustomShell.close = function()
+    CustomShell.active = false
+end function
+CustomShell.whoami = function()
+    user = CustomShell.interop.active_user
+    if user then
+        print(user)
+    else
+        print(CustomShell.interface_shell.get_user())
+    end if
+end function
+CustomShell.ifconfig = function()
+    local_ip = CustomShell.get_shell.host_computer.local_ip
+    gateway_ip = CustomShell.get_shell.host_computer.network_gateway
+    router = CustomShell.interop.get_router()
+    public_ip = CustomShell.get_shell.host_computer.public_ip
+    if router then
+        pubic_ip = router.public_ip
+    end if
+    print("Public IP: " + public_ip)
+    print("Local IP: " + local_ip)
+    print("Gateway IP: " + gateway_ip)
+end function
+CustomShell.pwd = function()
+    print(CustomShell.cur_dir)
+end function
+CustomShell.cd = function(params=null)
+    if not params or params.len() == 0 then 
+        dir = CustomShell.interop.home_dir
+    else
+        dir = params[0]
+    end if
+    shell = CustomShell.get_shell
+    current = shell.host_computer.File(CustomShell.cur_dir)
+    if not current then
+        Logger.error("Current directory no longer exists: " + CustomShell.cur_dir)
+        CustomShell.cur_dir = CustomShell.interop.home_dir
+        return null
+    end if
+    absolute_dir = CustomShell.get_absolute_dir(dir)
+    next = shell.host_computer.File(absolute_dir)
+    if dir == ".." then
+        parent = current.parent
+        if current.parent then
+            next = current.parent
+        else
+            next = shell.host_computer.File("/")
+        end if
+    end if
+    if not next then
+        Logger.error("Directory " + absolute_dir.bold() + " not found")
+        return null
+    end if
+    CustomShell.cur_dir = next.path
+end function
+CustomShell.ls = function(params=null) 
+    shell = CustomShell.get_shell
+    dir = CustomShell.cur_dir
+    if params and params.len() > 0 then
+        dir = CustomShell.get_absolute_dir(params[0])
+    end if
+    files = []
+    directory = shell.host_computer.File(dir)
+    if not directory then
+        Logger.error("Directory " + dir.bold() + " not found.")
+        return null
+    end if
+    if not directory.is_folder then
+        Logger.error(dir.bold() + " is not a directory.")
+        return null
+    end if
+    directory_row = [directory.permissions, directory.owner, directory.group, directory.size, "./"]
+    files.push(directory_row.join(" "))
+    for folder in directory.get_folders
+        folder_name = folder.name + "/"
+        row = [folder.permissions, folder.owner, folder.group, folder.size, folder_name.color(Color.BLUE).bold()]
+        files.push(row.join(" "))
+    end for
+    for file in directory.get_files
+        row = [file.permissions, file.owner, file.group, file.size, file.name]
+        files.push(row.join(" "))
+    end for
+    out_files = files.join(string.NEWLINE)
+    print(format_columns(out_files))
+end function
+CustomShell.cat = function(params=null)
+    shell = CustomShell.get_shell
+    if not params or params.len() < 1 then
+        Logger.error("File parameter required: " + "cat [file].".bold())
+        return null
+    end if
+    path = CustomShell.get_absolute_dir(params[0])
+    file = shell.host_computer.File(path)
+    if not file then
+        Logger.error("File " + path.bold() + " not found.")
+        return null
+    end if
+    if not file.has_permission("r") then
+        Logger.error("Permission denied.")
+        return null
+    end if
+    if file.is_binary or file.is_folder then
+        Logger.error(path.bold() + " is not a text file.")
+        return null
+    end if
+    content = file.get_content()
+    if content then
+        print(content)
+    end if
+end function
+CustomShell.ps = function()
+    shell = CustomShell.get_shell
+    print(format_columns(shell.host_computer.show_procs()))
+end function
+CustomShell.kill = function(params=null)
+    if not params or params.len() < 1 then
+        Logger.error("PID parameter required: " + "kill [PID]".bold())
+        return null
+    end if
+    pid = params[0].to_int()
+    shell = CustomShell.get_shell
+    success = shell.host_computer.close_program(pid)
+    if not success then
+        Logger.error("PID " + pid.to_string().bold() + " not found.")
+        return null
+    end if
+    print("Process " + pid.to_string().bold() + " closed.")
+end function
+CustomShell.rm = function(params=null)
+    if not params or params.len() < 1 then
+        Logger.error("File parameter required: " + "rm [file]".bold())
+        return null
+    end if
+    shell = CustomShell.get_shell
+    file_path = CustomShell.get_absolute_dir(params[0])
+    file = shell.host_computer.File(file_path)
+    if not file then
+        Logger.error("File " + file_path.bold() + " not found.")
+        return null
+    end if
+    if not file.has_permission("w") then
+        Logger.error("Permission denied.")
+        return null
+    end if
+    file.delete()
+end function
+
+
+// CustomShell command table
+CustomShell.add_command("whoami", "Get current user", @CustomShell.whoami)
+CustomShell.add_command("ifconfig", "Get machine network data", @CustomShell.ifconfig)
+CustomShell.add_command("pwd", "Get current directory", @CustomShell.pwd)
+CustomShell.add_command("cd", "Change directory", @CustomShell.cd)
+CustomShell.add_command("ls", "List files in directory", @CustomShell.ls)
+CustomShell.add_command("cat", "Get contents of a file", @CustomShell.cat)
+CustomShell.add_command("ps", "View running processes", @CustomShell.ps)
+CustomShell.add_command("kill", "Close a running process", @CustomShell.kill)
+CustomShell.add_command("rm", "Remove a file/folder", @CustomShell.rm)
+CustomShell.add_command("clear", "Clear the screen", @clear_screen)
+CustomShell.add_command("exit", "Exit shell", @CustomShell.close)
+
+
+IShell = {}
+IShell.create = function(shell)
+    self.get_shell = shell
+end function
+IShell.get_id = function()
+    return md5(self.get_public_ip() + self.get_local_ip() + self.get_user())
+end function
+IShell.get_public_ip = function()
+    return self.get_shell.host_computer.public_ip
+end function
+IShell.get_local_ip = function()
+    return self.get_shell.host_computer.local_ip
+end function
+IShell.get_user = function()
+    folders = self.get_shell.host_computer.File("/home").get_folders()
+    root_file = self.get_shell.host_computer.File("/root")
+    if not folders then return "guest"
+    if root_file then
+        if root_file.has_permission("r") and root_file.has_permission("w") and root_file.has_permission("x") then
+            return "root"
+        end if
+    end if
+    for folder in folders
+        if folder.name == "guest" then continue
+        if folder.has_permission("r") and folder.has_permission("w") and folder.has_permission("x") then
+            return folder.name
+        end if
+    end for
+    return "guest"
+end function
+IShell.open_terminal = function()
+    CustomShell.init(self)
+    CustomShell.start_shell()
+end function
+IShell.get_files = function(path)
+    folder = self.get_shell.host_computer.File(path)
+    if not folder then
+        Logger.error(path.bold() + " not found.")
+        return null
+    end if
+    if not folder.is_folder then 
+        Logger.error(path.bold() + " is not a folder.")
+        return null
+    end if  
+    files = folder.get_files()
+    if not files then
+        Logger.error("No files found in " + path.bold())
+        return null
+    end if
+    return files
+end function
+
+// Global command table
+CLI.add_global_command("clear", "Clear the screen", @clear_screen)
+
+
+// Command table
+CLI.add_command("index", "info", "Display your machine info", @Machine.print_machine_info)
+CLI.add_command("index", "build", "Open reverse shell builder", @Build.activate)
+CLI.add_command("index", "manage", "Manage your reverse shells", @Manage.activate)
+CLI.add_command("index", "exit", "Exit callback", @exit)
+
+CLI.add_command("build", "simple", "Generate a simple reverse shell", @Build.generate_simple, "simple [?ip] [?port] [?name]")
+CLI.add_command("build", "exit", "Back to index page", @Build.close)
+
+CLI.add_command("manage", "list", "List all active reverse shells", @Manage.list_shells)
+CLI.add_command("manage", "use", "Set active shell session", @Manage.use_shell, "use [session]")
+CLI.add_command("manage", "launch", "Launch the active shell session", @Manage.launch_shell)
+CLI.add_command("manage", "exit", "Back to index page", @Manage.close)
+
+// Find metaxploit
+metaxploit = include_lib("/lib/metaxploit.so")
+if not metaxploit then
+    metaxploit = include_lib(current_path + "/metaxploit.so")
+end if
+if not metaxploit then exit("Error: Can't find metaxploit library in the /lib path or the current folder")
+
+// Run input loop
+Logger.info("Welcome to " + Callback.constants.CLI_NAME + " v" + Callback.constants.VERSION.bold() + string.NEWLINE)
+while true
+    CLI.get_input()
+end while

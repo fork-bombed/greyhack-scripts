@@ -1,0 +1,2 @@
+SHELL_TEMPLATE = {}
+SHELL_TEMPLATE.source = "m=include_lib(""/lib/metaxploit.so"");if not m then m=include_lib(current_path+""/metaxploit.so"");m.rshell_client(""{ip}"", {port}, ""{proc_name}"")"
